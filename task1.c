@@ -10,10 +10,12 @@
 
 extern char **environ;
 
+
 struct option_info {
     int option;
     char *argument;
 };
+
 
 static int parse_nonnegative_long(const char *str, long *value)
 {
@@ -31,23 +33,21 @@ static int parse_nonnegative_long(const char *str, long *value)
     return 0;
 }
 
+
 int main(int argc, char *argv[])
 {
     int opt;
     int count = 0;
     int status = 0;
+    int i;
 
-    struct option_info *options =
-        malloc(sizeof(struct option_info) * (argc > 1 ? argc - 1 : 1));
-
-    if (options == NULL) {
-        perror("malloc");
-        return 1;
-    }
+    struct option_info *options = NULL;
 
     opterr = 0;
 
     while ((opt = getopt(argc, argv, "ispuU:cC:dvV:")) != -1) {
+
+        struct option_info *new_options;
 
         if (opt == '?') {
             if (optopt == 'U' || optopt == 'C' || optopt == 'V') {
@@ -64,15 +64,30 @@ int main(int argc, char *argv[])
             return 1;
         }
 
+        new_options = realloc(
+            options,
+            sizeof(struct option_info) * (count + 1)
+        );
+
+        if (new_options == NULL) {
+            perror("realloc");
+            free(options);
+            return 1;
+        }
+
+        options = new_options;
+
         options[count].option = opt;
         options[count].argument = optarg;
+
         count++;
     }
 
+
     /*
-     * Обрабатываем опции СПРАВА НАЛЕВО.
+     * Обрабатываем опции справа налево.
      */
-    for (int i = count - 1; i >= 0; i--) {
+    for (i = count - 1; i >= 0; i--) {
 
         switch (options[i].option) {
 
@@ -84,12 +99,14 @@ int main(int argc, char *argv[])
                    (long)getegid());
             break;
 
+
         case 's':
             if (setpgid(0, 0) == -1) {
                 perror("setpgid");
                 status = 1;
             }
             break;
+
 
         case 'p':
             printf("pid=%ld ppid=%ld pgid=%ld\n",
@@ -98,9 +115,12 @@ int main(int argc, char *argv[])
                    (long)getpgrp());
             break;
 
+
         case 'u':
         {
-            long limit = ulimit(UL_GETFSIZE);
+            long limit;
+
+            limit = ulimit(UL_GETFSIZE);
 
             if (limit == -1) {
                 perror("ulimit");
@@ -111,6 +131,7 @@ int main(int argc, char *argv[])
 
             break;
         }
+
 
         case 'U':
         {
@@ -132,6 +153,7 @@ int main(int argc, char *argv[])
             break;
         }
 
+
         case 'c':
         {
             struct rlimit limit;
@@ -151,6 +173,7 @@ int main(int argc, char *argv[])
 
             break;
         }
+
 
         case 'C':
         {
@@ -181,6 +204,7 @@ int main(int argc, char *argv[])
             break;
         }
 
+
         case 'd':
         {
             char cwd[PATH_MAX];
@@ -195,6 +219,7 @@ int main(int argc, char *argv[])
             break;
         }
 
+
         case 'v':
         {
             char **env;
@@ -206,10 +231,14 @@ int main(int argc, char *argv[])
             break;
         }
 
+
         case 'V':
         {
-            char *arg = options[i].argument;
-            char *equal_sign = strchr(arg, '=');
+            char *arg;
+            char *equal_sign;
+
+            arg = options[i].argument;
+            equal_sign = strchr(arg, '=');
 
             if (equal_sign == NULL || equal_sign == arg) {
                 fprintf(stderr,
