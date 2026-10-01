@@ -146,7 +146,7 @@ int main(int argc, char *argv[])
                 printf("core size: unlimited\n");
             } else {
                 printf("core size: %lu bytes\n",
-                       (unsigned long)limit.rlim_cur);
+                       (unsigned long)limit.rlim_max);
             }
 
             break;
