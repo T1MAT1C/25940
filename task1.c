@@ -142,7 +142,7 @@ int main(int argc, char *argv[])
                 break;
             }
 
-            if (limit.rlim_cur == RLIM_INFINITY) {
+            if (limit.rlim_max == RLIM_INFINITY) {
                 printf("core size: unlimited\n");
             } else {
                 printf("core size: %lu bytes\n",
