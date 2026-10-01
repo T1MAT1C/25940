@@ -98,19 +98,15 @@ int main(int argc, char *argv[])
 
         case 'u':
         {
-            struct rlimit limit;
+            long limit;
 
-            if (getrlimit(RLIMIT_FSIZE, &limit) == -1) {
-                perror("getrlimit");
+            limit = sysconf(_SC_CHILD_MAX);
+
+            if (limit == -1) {
+                perror("sysconf");
                 status = 1;
-                break;
-            }
-
-            if (limit.rlim_cur == RLIM_INFINITY) {
-                printf("ulimit=unlimited\n");
             } else {
-                printf("ulimit=%lu\n",
-                    (unsigned long)(limit.rlim_cur / 512));
+                printf("%ld\n", limit);
             }
 
             break;
