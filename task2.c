@@ -12,7 +12,7 @@ int main()
     printf("gmtime - %d/%d/%02d %d:%02d\n", sp->tm_mday, sp->tm_mon + 1, sp->tm_year + 1900, sp->tm_hour, sp->tm_min);
 
     sp = localtime(&now);
-    printf("localtime - %d/%d/%02d %d:%02d %s\n", sp->tm_mday, sp->tm_mon + 1, sp->tm_year + 1900, sp->tm_hour, sp->tm_min, tzname[sp->tm_isdst]);
+    printf("localtime - %d/%d/%02d %d:%02d\n", sp->tm_mday, sp->tm_mon + 1, sp->tm_year + 1900, sp->tm_hour, sp->tm_min,);
 
     time_t california = now - 15 * 3600;    // 15 часов от сервера
 
@@ -47,6 +47,6 @@ int main()
             sp = localtime(&california);
         }
     }
-    printf("california - %d/%d/%02d %d:%02d %s\n", sp->tm_mday, sp->tm_mon + 1, sp->tm_year + 1900, sp->tm_hour, sp->tm_min, tzname[sp->tm_isdst]);
+    printf("california - %d/%d/%02d %d:%02d\n", sp->tm_mday, sp->tm_mon + 1, sp->tm_year + 1900, sp->tm_hour, sp->tm_min);
     return 0;
 }
