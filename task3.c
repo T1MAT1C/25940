@@ -42,7 +42,7 @@ int main(void)
            (long)getuid(),
            (long)geteuid());
 
-    check_file("my_file.txt");
+    check_file("mibombo.txt");
 
     return 0;
 }
