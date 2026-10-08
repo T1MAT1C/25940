@@ -9,6 +9,33 @@ struct Node
     struct Node *next;
 };
 
+/* Удаляем стрелочки из строки */
+void remove_arrows(char *line)
+{
+    char *src = line;
+    char *dst = line;
+
+    while (*src != '\0')
+    {
+        /* Стрелки обычно имеют вид ESC [ A/B/C/D */
+        if (*src == '\033' && src[1] == '[')
+        {
+            if (src[2] == 'A' || src[2] == 'B' ||
+                src[2] == 'C' || src[2] == 'D')
+            {
+                src += 3;
+                continue;
+            }
+        }
+
+        *dst = *src;
+        dst++;
+        src++;
+    }
+
+    *dst = '\0';
+}
+
 
 int main()
 {
@@ -22,6 +49,8 @@ int main()
     while (1)
     {
         if (fgets(line, sizeof(line), stdin) == NULL) {break;}
+
+        remove_arrows(line);
 
         if (line[0] == '.'){break;} // конец ввода
 
