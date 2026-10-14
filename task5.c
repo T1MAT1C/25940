@@ -1,20 +1,26 @@
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <errno.h>
+#include <ctype.h>
+#include <string.h>
 
 typedef struct
 {
-    off_t offset;   // Где строка начинается в файле
-    long length;    // Длина строки в байтах
+    off_t offset;
+    long length;
 } Line;
 
 
-/* Добавляет одну строку в таблицу */
+/* Добавляет строку в таблицу */
 int add_line(Line **table, int *count, off_t offset, long length)
 {
     Line *tmp;
-    tmp = realloc(*table, (*count + 1) * sizeof(Line)); // память под новую строку
+
+    tmp = realloc(*table, (*count + 1) * sizeof(Line));
+
     if (tmp == NULL)
         return -1;
 
@@ -36,13 +42,15 @@ int main(int argc, char *argv[])
     ssize_t result;
 
     Line *table = NULL;
-
     int count = 0;
 
     off_t start = 0;
     long length = 0;
-
     long number;
+
+    char input[100];
+    char *end;
+    int c;
 
 
     if (argc != 2)
@@ -51,8 +59,6 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-
-    /* Открываем файл только для чтения */
     fd = open(argv[1], O_RDONLY);
 
     if (fd == -1)
@@ -62,10 +68,7 @@ int main(int argc, char *argv[])
     }
 
 
-    /*
-     * Строим таблицу строк.
-     * Читаем файл по одному символу.
-     */
+    /* Строим таблицу строк */
     while ((result = read(fd, &ch, 1)) == 1)
     {
         length++;
@@ -75,11 +78,11 @@ int main(int argc, char *argv[])
             if (add_line(&table, &count, start, length) == -1)
             {
                 perror("realloc");
+                free(table);
                 close(fd);
                 return 1;
             }
 
-            // Текущая позиция файла теперь начало следующей строки
             start = lseek(fd, 0L, SEEK_CUR);
 
             if (start == (off_t)-1)
@@ -94,7 +97,6 @@ int main(int argc, char *argv[])
         }
     }
 
-
     if (result == -1)
     {
         perror("read");
@@ -103,8 +105,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-
-    // Если последняя строка не заканчивается '\n'
+    /* Последняя строка без '\n' */
     if (length > 0)
     {
         if (add_line(&table, &count, start, length) == -1)
@@ -117,10 +118,7 @@ int main(int argc, char *argv[])
     }
 
 
-    /*
-     * Теперь таблица готова.
-     * Пользователь вводит номер нужной строки.
-     */
+    /* Ввод номера строки */
     while (1)
     {
         Line line;
@@ -128,17 +126,47 @@ int main(int argc, char *argv[])
         ssize_t bytes;
 
         printf("Введите номер строки (0 - выход): ");
+        fflush(stdout);
 
-        if (scanf("%ld", &number) != 1)
-        {
-            printf("Неверный ввод\n");
+        /* Читаем ввод целиком */
+        if (fgets(input, sizeof(input), stdin) == NULL)
             break;
+
+        /* Если ввод слишком длинный, очищаем остаток */
+        if (strchr(input, '\n') == NULL && !feof(stdin))
+        {
+            while ((c = getchar()) != '\n' && c != EOF)
+            {
+            }
+
+            printf("Неверный ввод\n");
+            continue;
         }
 
+        /* Превращаем текст в число */
+        errno = 0;
+        number = strtol(input, &end, 10);
+
+        /* Проверяем, получилось ли число */
+        if (end == input || errno == ERANGE)
+        {
+            printf("Неверный ввод\n");
+            continue;
+        }
+
+        /* Пропускаем пробелы после числа */
+        while (isspace((unsigned char)*end))
+            end++;
+
+        /* Если остались лишние символы */
+        if (*end != '\0')
+        {
+            printf("Неверный ввод\n");
+            continue;
+        }
 
         if (number == 0)
             break;
-
 
         if (number < 1 || number > count)
         {
@@ -146,20 +174,14 @@ int main(int argc, char *argv[])
             continue;
         }
 
-
-        // В массиве нумерация начинается с нуля
         line = table[number - 1];
 
-
-        // Переходим точно к началу нужной строки
         if (lseek(fd, line.offset, SEEK_SET) == (off_t)-1)
         {
             perror("lseek");
             break;
         }
 
-
-        // +1 для символа конца строки '\0'
         buffer = malloc(line.length + 1);
 
         if (buffer == NULL)
@@ -168,8 +190,6 @@ int main(int argc, char *argv[])
             break;
         }
 
-
-        // Читаем ровно нужную строку
         bytes = read(fd, buffer, line.length);
 
         if (bytes == -1)
@@ -179,14 +199,12 @@ int main(int argc, char *argv[])
             break;
         }
 
-
         buffer[bytes] = '\0';
 
         printf("%s", buffer);
 
         free(buffer);
     }
-
 
     free(table);
     close(fd);
