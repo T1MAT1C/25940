@@ -1,277 +1,142 @@
+
+#define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <signal.h>
-#include <errno.h>
-#include <ctype.h>
-#include <termios.h>
+#include <sys/types.h>
 
 typedef struct {
-    off_t offset;
-    long length;
+    off_t start, len;
 } Line;
 
+Line *lines = NULL;
+size_t count = 0;
 volatile sig_atomic_t timeout = 0;
 
-void alarm_handler(int sig)
-{
+void on_alarm(int sig) {
     (void)sig;
     timeout = 1;
 }
 
-/* Добавление строки в таблицу */
-int add_line(Line **table, int *count, off_t start, long length)
-{
-    Line *tmp = realloc(*table, (*count + 1) * sizeof(Line));
-    if (tmp == NULL)
-        return -1;
-
-    *table = tmp;
-    (*table)[*count].offset = start;
-    (*table)[*count].length = length;
-    (*count)++;
-    return 0;
-}
-
-/* Вывод строки или всего файла */
-int print_bytes(int fd, off_t start, off_t length)
-{
-    char buf[512];
-
-    if (lseek(fd, start, SEEK_SET) == -1)
-        return -1;
-
-    while (length > 0)
-    {
-        size_t size = length > sizeof(buf) ? sizeof(buf) : (size_t)length;
-        ssize_t n = read(fd, buf, size);
-
-        if (n <= 0)
-            return -1;
-
-        ssize_t done = 0;
-        while (done < n)
-        {
-            ssize_t k = write(1, buf + done, n - done);
-            if (k <= 0)
-                return -1;
-            done += k;
-        }
-
-        length -= n;
+void add_line(off_t start, off_t len) {
+    Line *p = realloc(lines, (count + 1) * sizeof(Line));
+    if (!p) {
+        perror("realloc");
+        exit(1);
     }
-    return 0;
+    lines = p;
+    lines[count++] = (Line){start, len};
 }
 
-/* Ввод числа, таймер только на первую клавишу */
-int read_number(long *number, int first)
-{
-    struct termios old, mode;
-    char input[64], ch, *end;
-    int len = 0, bad = 0, status = 1;
+void show_all(int fd) {
+    char buf[4096];
     ssize_t n;
 
-    if (tcgetattr(0, &old) == -1)
-        return -1;
-
-    mode = old;
-    mode.c_lflag &= ~(ICANON | ECHO);
-    mode.c_cc[VMIN] = 1;
-    mode.c_cc[VTIME] = 0;
-
-    if (tcsetattr(0, TCSANOW, &mode) == -1)
-        return -1;
-
-    timeout = 0;
-    if (first)
-        alarm(5);
-
-    while (1)
-    {
-        n = read(0, &ch, 1);
-
-        if (n == -1)
-        {
-            if (errno == EINTR && timeout)
-            {
-                status = 2;
-                break;
-            }
-            if (errno == EINTR)
-                continue;
-
-            status = -1;
-            break;
-        }
-
-        if (n == 0)
-        {
-            status = -1;
-            break;
-        }
-
-        /* Первая клавиша отключает таймер */
-        if (first)
-        {
-            alarm(0);
-            first = 0;
-        }
-
-        if (ch == '\n' || ch == '\r')
-        {
-            printf("\n");
-            break;
-        }
-
-        if (ch == 127 || ch == '\b')
-        {
-            if (len > 0)
-            {
-                len--;
-                printf("\b \b");
-                fflush(stdout);
-            }
-            continue;
-        }
-
-        if (len < 63)
-        {
-            input[len++] = ch;
-            if (isprint((unsigned char)ch))
-                write(1, &ch, 1);
-        }
-        else
-            bad = 1;
-    }
-
-    alarm(0);
-    if (tcsetattr(0, TCSANOW, &old) == -1)
-        return -1;
-
-    if (status != 1)
-        return status;
-
-    input[len] = '\0';
-    errno = 0;
-    *number = strtol(input, &end, 10);
-
-    if (bad || end == input || errno == ERANGE)
-        return 0;
-
-    while (isspace((unsigned char)*end))
-        end++;
-
-    if (*end != '\0')
-        return 0;
-
-    return 1;
+    lseek(fd, 0, SEEK_SET);
+    while ((n = read(fd, buf, sizeof(buf))) > 0)
+        fwrite(buf, 1, n, stdout);
 }
 
-int main(int argc, char *argv[])
-{
-    int fd, count = 0, first = 1;
-    char ch;
-    ssize_t n;
-    Line *table = NULL;
-    off_t start = 0, size = 0;
-
-    if (argc != 2)
-    {
+int main(int argc, char *argv[]) {
+    if (argc != 2) {
         printf("Использование: %s файл\n", argv[0]);
         return 1;
     }
 
-    fd = open(argv[1], O_RDONLY);
-    if (fd == -1)
-    {
+    int fd = open(argv[1], O_RDONLY);
+    if (fd < 0) {
         perror("open");
         return 1;
     }
 
-    /* Составляем таблицу строк */
-    while ((n = read(fd, &ch, 1)) == 1)
-    {
-        size++;
+    // Создаём таблицу строк
+    char c;
+    off_t pos = 0, start = 0;
+    ssize_t r;
 
-        if (ch == '\n')
-        {
-            if (add_line(&table, &count, start, size - start) == -1)
-                goto error;
-
-            start = size;
+    while ((r = read(fd, &c, 1)) == 1) {
+        if (c == '\n') {
+            add_line(start, pos - start);
+            start = pos + 1;
         }
+        pos++;
     }
+    if (r < 0) {
+        perror("read");
+        close(fd);
+        free(lines);
+        return 1;
+    }
+    if (pos > start)
+        add_line(start, pos - start);
 
-    if (n == -1)
-        goto error;
-
-    if (size > start)
-        if (add_line(&table, &count, start, size - start) == -1)
-            goto error;
-
-    /* Настраиваем таймер */
+    // Настраиваем сигнал таймера
     struct sigaction sa = {0};
-    sa.sa_handler = alarm_handler;
+    sa.sa_handler = on_alarm;
     sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0;
+    sigaction(SIGALRM, &sa, NULL);
 
-    if (sigaction(SIGALRM, &sa, NULL) == -1)
-        goto error;
+    char input[64];
+    int first = 1;
 
-    while (1)
-    {
-        long number;
-
-        printf("Введите номер строки (0 - выход): ");
+    while (1) {
+        printf("Номер строки (0 - выход): ");
         fflush(stdout);
 
-        int status = read_number(&number, first);
+        if (first)
+            alarm(5);
+
+        if (!fgets(input, sizeof(input), stdin)) {
+            if (timeout) {
+                printf("\nВремя вышло! Весь файл:\n");
+                show_all(fd);
+            }
+            break;
+        }
+
+        alarm(0);
         first = 0;
 
-        if (status == 2)
-        {
-            printf("\nВремя вышло. Весь файл:\n");
-            fflush(stdout);
-            if (print_bytes(fd, 0, size) == -1)
-                perror("print_bytes");
+        if (timeout) {
+            printf("\nВремя вышло! Весь файл:\n");
+            show_all(fd);
             break;
         }
 
-        if (status == -1)
-            break;
+        char *end;
+        long num = strtol(input, &end, 10);
 
-        if (status == 0)
-        {
-            printf("Неверный ввод\n");
+        if (end == input || (*end && *end != '\n')) {
+            puts("Некорректный ввод");
             continue;
         }
 
-        if (number == 0)
+        if (num == 0)
             break;
 
-        if (number < 1 || number > count)
-        {
-            printf("Такой строки нет\n");
+        if (num < 1 || (size_t)num > count) {
+            printf("Всего строк: %zu\n", count);
             continue;
         }
 
-        Line line = table[number - 1];
-
-        if (print_bytes(fd, line.offset, line.length) == -1)
-        {
-            perror("print_bytes");
+        // Выводим выбранную строку
+        Line line = lines[num - 1];
+        if (lseek(fd, line.start, SEEK_SET) == -1) {
+            perror("lseek");
             break;
         }
+
+        for (off_t i = 0; i < line.len; i++) {
+            if (read(fd, &c, 1) != 1)
+                break;
+            putchar(c);
+        }
+        putchar('\n');
     }
 
-    free(table);
     close(fd);
+    free(lines);
     return 0;
-
-error:
-    perror("Ошибка");
-    free(table);
-    close(fd);
-    return 1;
 }
