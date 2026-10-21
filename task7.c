@@ -1,4 +1,3 @@
-
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,6 +6,7 @@
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
+#include <errno.h>
 
 typedef struct {
     size_t start, len;
@@ -83,7 +83,8 @@ int main(int argc, char *argv[]) {
     sigemptyset(&sa.sa_mask);
     sigaction(SIGALRM, &sa, NULL);
 
-    char input[64];
+    char *input = NULL;
+    size_t capacity = 0;
     int first = 1;
 
     while (1) {
@@ -93,7 +94,7 @@ int main(int argc, char *argv[]) {
         if (first)
             alarm(5);
 
-        if (!fgets(input, sizeof(input), stdin)) {
+        if (getline(&input, &capacity, stdin) == -1) {
             if (timeout) {
                 printf("\nВремя вышло! Весь файл:\n");
                 if (size)
@@ -113,9 +114,11 @@ int main(int argc, char *argv[]) {
         }
 
         char *end;
+        errno = 0;
         long num = strtol(input, &end, 10);
-
-        if (end == input || (*end && *end != '\n')) {
+        
+        if (end == input || errno == ERANGE ||
+            (*end && *end != '\n')) {
             puts("Некорректный ввод");
             continue;
         }
@@ -137,6 +140,7 @@ int main(int argc, char *argv[]) {
     if (size)
         munmap(data, size);
 
+    free(input);
     free(lines);
     return 0;
 }
