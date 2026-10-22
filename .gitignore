@@ -1,0 +1,30 @@
+# Compiled C/C++ files
+*.o
+*.obj
+*.exe
+*.out
+*.a
+*.lib
+*.so
+*.so.*
+*.dll
+*.dylib
+*.pdb
+
+# Executables produced by the task Makefiles
+/task[0-9]*/task[0-9]*
+!/task[0-9]*/task[0-9]*.*
+
+# Build directories
+/build/
+/cmake-build-*/
+
+# Editor temporary files
+*.swp
+*.swo
+*~
+
+# Operating system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
