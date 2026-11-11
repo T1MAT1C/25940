@@ -38,7 +38,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    printf("task9: подпроцесс завершился\n");
+    printf("\ntask9: подпроцесс завершился\n");
 
     return 0;
 }
