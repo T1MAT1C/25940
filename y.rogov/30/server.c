@@ -12,7 +12,7 @@
 
 int main()
 {
-  write(STDOUT_FILENO, "PARENT: HELLO FROM PARENT!\n", 27);
+  write(STDOUT_FILENO, "SERVER: HELLO FROM PARENT!\n", 27);
   unlink(SOCKET_PATH);
 
   // socket
@@ -58,7 +58,7 @@ int main()
     for (ssize_t i = 0; i < size; ++i) msg[i] = toupper(msg[i]);
 
     // output msg
-    write(STDOUT_FILENO, "PARENT: OMG!!! I'VE GOT A MESSAGE:\n", 35);
+    write(STDOUT_FILENO, "SERVER: OMG!!! I'VE GOT A MESSAGE:\n", 35);
     write(STDOUT_FILENO, msg, size);
     write(STDOUT_FILENO, "\n", 1);
   }

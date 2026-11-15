@@ -14,16 +14,18 @@ all: build/1.out\
 		 build/30.out\
 		 build/30_client.out\
 		 build/30_server.out\
+		 build/31_client.out\
+		 build/31_server.out\
 
 build/%.out : %/main.c
 	@mkdir -p build
 	cc $< -o $@
 
-build/30_client.out : 30/client.c
+build/%_client.out : %/client.c
 	@mkdir -p build
 	cc $< -o $@
 
-build/30_server.out : 30/server.c
+build/%_server.out : %/server.c
 	@mkdir -p build
 	cc $< -o $@
 

@@ -11,7 +11,7 @@
 
 int main()
 {
-  write(STDOUT_FILENO, "CHILD: HELLO FROM CHILD!\n", 25);
+  write(STDOUT_FILENO, "CLIENT: HELLO FROM CLIENT!\n", 27);
 
   // socket
   int sock_fd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -33,14 +33,14 @@ int main()
   }
 
   // send
-  char msg[] = "hello from child!!!";
+  char msg[] = "Hello from Client!";
   if (send(sock_fd, msg, strlen(msg), 0) < 0)
   {
     perror("send");
     return EXIT_FAILURE;
   }
 
-  write(STDOUT_FILENO, "CHILD: I'VE SENT A MESSAGE:\n", 28);
+  write(STDOUT_FILENO, "CLIENT: I'VE SENT A MESSAGE:\n", 29);
   write(STDOUT_FILENO, msg, strlen(msg));
   write(STDOUT_FILENO, "\n", 1);
 
