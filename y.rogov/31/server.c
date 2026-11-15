@@ -1,3 +1,4 @@
+#include <ctype.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <sys/un.h>
@@ -76,7 +77,7 @@ int main()
       {
         if (pfds[i].revents & POLLIN)
         {
-          char buf[256];
+          char buf[256] = {0};
           int n = recv(pfds[i].fd, buf, sizeof(buf), 0);
           if (n < 0)
             err(EXIT_FAILURE, "recv");
@@ -86,6 +87,8 @@ int main()
             nfds--;
             i--;
           }
+          for (int j = 0; j < strlen(buf); ++j)
+            buf[j] = toupper(buf[j]);
           write(STDOUT_FILENO, buf, n);
         }
         else

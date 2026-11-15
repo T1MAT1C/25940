@@ -51,10 +51,14 @@ int main(int argc, char *argv[])
     if (send(sock_fd, msg, strlen(msg), 0) < 0)
     {
       perror("send");
+
+      if (close(sock_fd) < 0)
+      {
+        perror("close");
+        return EXIT_FAILURE;
+      }
       return EXIT_FAILURE;
     }
     sleep(1);
   }
-
-  close(sock_fd);
 }

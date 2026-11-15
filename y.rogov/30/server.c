@@ -12,7 +12,7 @@
 
 int main()
 {
-  write(STDOUT_FILENO, "SERVER: HELLO FROM PARENT!\n", 27);
+  write(STDOUT_FILENO, "SERVER: HELLO FROM SERVER!\n", 27);
   unlink(SOCKET_PATH);
 
   // socket
