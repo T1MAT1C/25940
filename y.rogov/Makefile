@@ -16,6 +16,8 @@ all: build/1.out\
 		 build/30_server.out\
 		 build/31_client.out\
 		 build/31_server.out\
+		 build/32_client.out\
+		 build/32_server.out\
 
 build/%.out : %/main.c
 	@mkdir -p build
