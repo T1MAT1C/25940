@@ -37,7 +37,7 @@ void sig_handler(int sig)
   }
   else if (sig == SIGQUIT)
   {
-    char buf[64] = {};
+    char buf[64] = {0};
     int len = itoa(count, buf);
     write(STDOUT_FILENO, "BELL USED ", 10);
     write(STDOUT_FILENO, buf, len);
@@ -48,8 +48,13 @@ void sig_handler(int sig)
 
 int main()
 {
-  signal(SIGINT, sig_handler);
-  signal(SIGQUIT, sig_handler);
+  struct sigaction sa;
+  sa.sa_handler = sig_handler;
+  sigemptyset(&sa.sa_mask);
+  sa.sa_flags = 0;
+
+  sigaction(SIGINT, &sa, NULL);
+  sigaction(SIGQUIT, &sa, NULL);
 
   while(1);
 }

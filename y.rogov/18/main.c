@@ -10,7 +10,7 @@
 
 int main(int argc, const char *argv[])
 {
-  for (int a = 0; a < argc; ++a)
+  for (int a = 1; a < argc; ++a)
   {
     // stat
     const char *path = argv[a];

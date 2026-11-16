@@ -10,6 +10,10 @@
 #include <signal.h>
 #include <sys/ioctl.h>
 #include <errno.h>
+#include <sys/file.h>
+#ifdef __sun
+#include <stropts.h>
+#endif
 
 #define SOCKET_PATH "build/socket.sock"
 #define SOCKET_CONN_LIMIT 32
@@ -20,6 +24,19 @@ int fd;
 int clients[SOCKET_CONN_LIMIT] = {0};
 int nclients = 0;
 
+void set_async(int fd)
+{
+  fcntl(fd, F_SETOWN, getpid());
+  int fl = fcntl(fd, F_GETFL);
+#if defined(__sun)
+  int sig_mask = S_INPUT | S_RDNORM;
+  ioctl(fd, I_SETSIG, sig_mask);
+  fcntl(fd, F_SETFL, fl | O_NONBLOCK);
+#elif defined(__linux__)
+  fcntl(fd, F_SETFL, fl | O_ASYNC | O_NONBLOCK);
+#endif
+}
+
 void on_server_sigio(int sig)
 {
   // accept
@@ -27,13 +44,7 @@ void on_server_sigio(int sig)
   while((client = accept(fd, NULL, NULL)) >= 0)
   {
     print("SERVER: NEW CONNECTION\n");
-    fcntl(client, F_SETOWN, getpid());
-    int fl = fcntl(client, F_GETFL);
-#if defined(__sun)
-    fcntl(client, F_SETFL, fl | FASYNC | FNDELAY);
-#elif defined(__linux__)
-    fcntl(client, F_SETFL, fl | O_ASYNC | O_NONBLOCK);
-#endif
+    set_async(client);
     
     if (nclients >= SOCKET_CONN_LIMIT) {
       close(client);
@@ -55,9 +66,10 @@ void on_server_sigio(int sig)
       write(STDOUT_FILENO, buf, n);
     }
 
+    if (n == -1 && errno == EAGAIN)
+      continue;
     if (n <= 0)
     {
-      if (errno == EAGAIN) continue;
       close(clients[i]);
       clients[i] = clients[--nclients];
       i--;
@@ -86,15 +98,9 @@ int main()
     err(EXIT_FAILURE, "listen");
 
   // set server async
-  fcntl(fd, F_SETOWN, getpid());
-  int fl = fcntl(fd, F_GETFL);
-#if defined(__sun)
-  fcntl(fd, F_SETFL, fl | FASYNC | FNDELAY);
-#elif defined(__linux__)
-  fcntl(fd, F_SETFL, fl | O_ASYNC | O_NONBLOCK);
-#endif
+  set_async(fd);
 
-  signal(SIGIO, on_server_sigio);
+  sigset(SIGIO, on_server_sigio);
 
   print("SERVER: WAITING FOR CONNECTIONS...\n");
   while(1) pause();

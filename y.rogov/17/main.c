@@ -17,6 +17,8 @@ void enableRawMode() {
 
   struct termios raw = orig_termios;
   raw.c_lflag &= ~(ECHO | ICANON);
+  raw.c_cc[VMIN] = 1;
+  raw.c_cc[VTIME] = 0;
 
   tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 }
@@ -61,7 +63,7 @@ int main()
   write(STDOUT_FILENO, "ENTER YOUR INPUT:\n", 19);
 
   char c;
-  int words[STR_LEN*STR_COUNT] = {};
+  int words[STR_LEN*STR_COUNT] = {0};
   int word_count = 0;
   int len = 0;
   _Bool prev_ws = 0;

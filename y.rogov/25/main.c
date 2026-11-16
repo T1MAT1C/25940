@@ -19,7 +19,7 @@ int main()
     if (close(pipefd[1]) < 0)
       err(EXIT_FAILURE, "close");
 
-    char buf[256];
+    char buf[256] = {0};
     int n;
     if ((n = read(pipefd[0], &buf, sizeof buf)) < 0)
       err(EXIT_FAILURE, "read");
