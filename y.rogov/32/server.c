@@ -100,7 +100,11 @@ int main()
   // set server async
   set_async(fd);
 
+#if defined(__sun)
   sigset(SIGIO, on_server_sigio);
+#elif defined(__linux__)
+  signal(SIGIO, on_server_sigio);
+#endif
 
   print("SERVER: WAITING FOR CONNECTIONS...\n");
   while(1) pause();
