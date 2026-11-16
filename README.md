@@ -12,6 +12,8 @@ ssh 10.4.0.68
 
 cat .ssh/id_rsa.pub
 
+
+I add useless info
 # Первый этап
 
 1. Перейти по ссылке https://github.com/vkinsu/23930.git
