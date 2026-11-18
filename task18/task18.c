@@ -8,7 +8,7 @@
 #include <time.h>
 #include <string.h>
 
-// Выводим только имя файла без пути
+// имя файла без пути
 void print_name(char *path) {
     int len = strlen(path);
 
@@ -48,12 +48,12 @@ int main(int argc, char *argv[]) {
         // Определяем тип файла и права доступа
         char mode[11] = "----------";
 
-        if (S_ISDIR(st.st_mode))
+        if (S_ISDIR(st.st_mode))    //каталог
             mode[0] = 'd';
-        else if (S_ISREG(st.st_mode))
+        else if (S_ISREG(st.st_mode))   // обычный файл
             mode[0] = '-';
         else
-            mode[0] = '?';
+            mode[0] = '?';  //  гав
 
         if (st.st_mode & S_IRUSR) mode[1] = 'r';
         if (st.st_mode & S_IWUSR) mode[2] = 'w';
@@ -67,7 +67,7 @@ int main(int argc, char *argv[]) {
         if (st.st_mode & S_IWOTH) mode[8] = 'w';
         if (st.st_mode & S_IXOTH) mode[9] = 'x';
 
-        // Получаем владельца и группу
+        // владелец и группа
         struct passwd *pw = getpwuid(st.st_uid);
         struct group *gr = getgrgid(st.st_gid);
 
@@ -78,14 +78,14 @@ int main(int argc, char *argv[]) {
         snprintf(group, sizeof(group), "%s",
                  gr ? gr->gr_name : "unknown");
 
-        // Получаем дату изменения файла
+        // получаем дату изменения файла
         char date[32] = "unknown";
         struct tm *tm = localtime(&st.st_mtime);
 
         if (tm)
             strftime(date, sizeof(date), "%Y-%m-%d %H:%M", tm);
 
-        // Выводим информацию
+        // принт принт принт
         printf("%-10s %5lu %-15s %-15s",
                mode, (unsigned long)st.st_nlink, owner, group);
 
