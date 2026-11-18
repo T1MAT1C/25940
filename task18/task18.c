@@ -33,7 +33,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    printf("%-10s %5s %-15s %-15s %10s %-17s %s\n",
+    printf("%-10s    %5s     %-15s   %-15s   %10s    %-17s   %s\n",
            "Права", "Связи", "Владелец", "Группа",
            "Размер", "Дата", "Имя");
 
@@ -85,8 +85,8 @@ int main(int argc, char *argv[]) {
         if (tm)
             strftime(date, sizeof(date), "%Y-%m-%d %H:%M", tm);
 
-        // принт принт принт
-        printf("%-10s %5lu %-15s %-15s",
+        // принт принт
+        printf("%-10s    %5lu     %-15s   %-15s",
                mode, (unsigned long)st.st_nlink, owner, group);
 
         if (S_ISREG(st.st_mode))
