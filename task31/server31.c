@@ -13,6 +13,7 @@
 
 int main() {
     int server_fd, client_fd, max_fd;
+    int esc_state = 0;
     fd_set master, readfds;
     struct sockaddr_un addr;
     char buf[1024];
@@ -34,7 +35,7 @@ int main() {
     addr.sun_family = AF_UNIX;
     strcpy(addr.sun_path, SOCKET_PATH);
 
-    // Привязываем сокет и начинаем ожидать клиентов
+    // Привязываем сокет и ожидаем клиентов
     if (bind(server_fd, (struct sockaddr *)&addr, sizeof(addr)) == -1 ||
         listen(server_fd, 10) == -1) {
         perror("bind/listen");
@@ -43,7 +44,6 @@ int main() {
         return 1;
     }
 
-    // Добавляем серверный сокет в набор
     FD_ZERO(&master);
     FD_SET(server_fd, &master);
     max_fd = server_fd;
@@ -53,7 +53,6 @@ int main() {
     while (1) {
         readfds = master;
 
-        // Ждём активности любого сокета
         if (select(max_fd + 1, &readfds, NULL, NULL, NULL) == -1) {
             if (errno == EINTR)
                 continue;
@@ -65,7 +64,7 @@ int main() {
             if (!FD_ISSET(fd, &readfds))
                 continue;
 
-            // Если подключается новый клиент
+            // Принимаем ислам
             if (fd == server_fd) {
                 client_fd = accept(server_fd, NULL, NULL);
 
@@ -85,7 +84,6 @@ int main() {
                 printf("Подключился новый клиент\n");
             }
             else {
-                // Получаем данные от клиента
                 ssize_t n = read(fd, buf, sizeof(buf));
 
                 if (n < 0 && errno == EINTR)
@@ -101,17 +99,51 @@ int main() {
                     continue;
                 }
 
-                // Переводим текст в верхний регистр
-                for (ssize_t i = 0; i < n; i++)
-                    buf[i] = (char)toupper((unsigned char)buf[i]);
+                // Игнорируем стрелки и другие Escape-последовательности
+                int out = 0;
 
-                fwrite(buf, 1, n, stdout);
-                fflush(stdout);
+                for (ssize_t i = 0; i < n; i++) {
+                    unsigned char c = (unsigned char)buf[i];
+
+                    if (esc_state == 0 && c == 27) {
+                        esc_state = 1;
+                        continue;
+                    }
+
+                    if (esc_state == 1) {
+                        if (c == '[') esc_state = 2;
+                        else if (c == 'O') esc_state = 3;
+                        else {
+                            esc_state = 0;
+                            buf[out++] = (char)toupper(c);
+                        }
+                        continue;
+                    }
+
+                    if (esc_state == 2) {
+                        if (c == 27)
+                            esc_state = 1;
+                        else if (c >= 0x40 && c <= 0x7E)
+                            esc_state = 0;
+                        continue;
+                    }
+
+                    if (esc_state == 3) {
+                        esc_state = 0;
+                        continue;
+                    }
+
+                    buf[out++] = (char)toupper(c);
+                }
+
+                if (out > 0) {
+                    fwrite(buf, 1, out, stdout);
+                    fflush(stdout);
+                }
             }
         }
     }
 
-    // Закрываем все соединения
     for (int fd = 0; fd <= max_fd; fd++) {
         if (FD_ISSET(fd, &master) && fd != server_fd)
             close(fd);
