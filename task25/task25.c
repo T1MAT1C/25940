@@ -1,96 +1,116 @@
+
 #include <stdio.h>
-#include <stdlib.h>
 #include <unistd.h>
-#include <sys/wait.h>
+#include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 #include <errno.h>
-
-// Функция для дочернего процесса: читает из канала и выводит в верхнем регистре
-void child_process(int read_fd) {
-    // Закрываем дескриптор записи, так как нам нужно только чтение
-    close(read_fd + 1); 
-
-    char buffer[256];
-    ssize_t bytes_read;
-
-    printf("Дочерний процесс запущен (PID: %d)\n", getpid());
-
-    // Читаем данные блоками из канала
-    while ((bytes_read = read(read_fd, buffer, sizeof(buffer))) > 0) {
-        for (ssize_t i = 0; i < bytes_read; ++i) {
-            // Преобразуем каждый символ в верхний регистр и выводим
-            putchar(toupper((unsigned char)buffer[i]));
-        }
-        fflush(stdout); // Принудительная сброска буфера для немедленного вывода
-    }
-
-    if (bytes_read < 0) {
-        perror("Ошибка чтения из канала");
-    }
-
-    close(read_fd);
-    _exit(EXIT_SUCCESS);
-}
-
-// Функция для родительского процесса: читает с клавиатуры и пишет в канал
-void parent_process(int write_fd, pid_t child_pid) {
-    // Закрываем дескриптор чтения, так как нам нужно только запись
-    close(write_fd - 1); 
-
-    char input_buffer[256];
-    ssize_t bytes_read;
-
-    printf("Родительский процесс запущен (PID: %d). Введите текст (Ctrl+D для завершения):\n", getpid());
-
-    // Цикл чтения с клавиатуры и записи в канал
-    while ((bytes_read = read(STDIN_FILENO, input_buffer, sizeof(input_buffer))) > 0) {
-        if (write(write_fd, input_buffer, bytes_read) != bytes_read) {
-            perror("Ошибка записи в канал");
-            break;
-        }
-    }
-
-    // Критически важно: закрыть дескриптор записи.
-    // Это сигнализирует дочернему процессу о том, что больше данных не будет (EOF).
-    close(write_fd);
-
-    // Ждем завершения дочернего процесса и получаем его код возврата
-    int status;
-    if (waitpid(child_pid, &status, 0) == -1) {
-        perror("Ошибка ожидания дочернего процесса");
-    } else {
-        printf("Дочерний процесс завершился с кодом: %d\n", WEXITSTATUS(status));
-    }
-}
+#include <sys/wait.h>
 
 int main(void) {
-    int pipe_fds[2];
-    pid_t child_pid;
+    int fd[2];
+    pid_t pid;
+    char buf[256];
 
-    // Создание канала для межпроцессного взаимодействия
-    if (pipe(pipe_fds) == -1) {
-        perror("Не удалось создать канал");
-        return EXIT_FAILURE;
+    // Создаём программный канал
+    if (pipe(fd) == -1) {
+        perror("pipe");
+        return 1;
     }
 
-    // Разделение процесса
-    child_pid = fork();
-    
-    if (child_pid < 0) {
-        perror("Ошибка создания дочернего процесса");
-        close(pipe_fds[0]);
-        close(pipe_fds[1]);
-        return EXIT_FAILURE;
+    pid = fork();
+
+    if (pid == -1) {
+        perror("fork");
+        return 1;
     }
 
-    if (child_pid == 0) {
-        // Дочерний процесс
-        child_process(pipe_fds[0]);
-    } else {
-        // Родительский процесс
-        parent_process(pipe_fds[1], child_pid);
+    if (pid == 0) {
+        // Дочерний процесс читает данные из канала
+        close(fd[1]);
+
+        int esc = 0;
+        ssize_t n;
+
+        while ((n = read(fd[0], buf, sizeof(buf))) != 0) {
+            if (n < 0 && errno == EINTR)
+                continue;
+            if (n < 0) {
+                perror("read");
+                break;
+            }
+
+            int out = 0;
+
+            // Игнорируем стрелочки и другие Escape-последовательности
+            for (ssize_t i = 0; i < n; i++) {
+                unsigned char c = (unsigned char)buf[i];
+
+                if (esc == 1) {
+                    if (c == '[') esc = 2;
+                    else if (c == 'O') esc = 3;
+                    else if (c != 27) {
+                        esc = 0;
+                        buf[out++] = (char)toupper(c);
+                    }
+                    continue;
+                }
+
+                if (esc == 2) {
+                    if (c >= 0x40 && c <= 0x7E)
+                        esc = 0;
+                    continue;
+                }
+
+                if (esc == 3) {
+                    esc = 0;
+                    continue;
+                }
+
+                if (c == 27) {
+                    esc = 1;
+                    continue;
+                }
+
+                buf[out++] = (char)toupper(c);
+            }
+
+            if (out > 0)
+                write(STDOUT_FILENO, buf, out);
+        }
+
+        close(fd[0]);
+    }
+    else {
+        // Родительский процесс отправляет текст в канал
+        close(fd[0]);
+
+        printf("Введите текст (Ctrl+D для завершения):\n");
+
+        ssize_t n;
+        while ((n = read(STDIN_FILENO, buf, sizeof(buf))) > 0) {
+            ssize_t sent = 0;
+
+            while (sent < n) {
+                ssize_t k = write(fd[1], buf + sent, n - sent);
+
+                if (k < 0 && errno == EINTR)
+                    continue;
+                if (k <= 0) {
+                    perror("write");
+                    break;
+                }
+
+                sent += k;
+            }
+
+            if (sent < n)
+                break;
+        }
+
+        close(fd[1]);
+        waitpid(pid, NULL, 0);
     }
 
-    return EXIT_SUCCESS;
+    return 0;
 }
