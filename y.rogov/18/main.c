@@ -26,6 +26,7 @@ int main(int argc, const char *argv[])
 
     // dir
     char dir = S_ISDIR(st.st_mode) ? 'd' 
+             : S_ISLNK(st.st_mode) ? 'l' 
              : S_ISREG(st.st_mode) ? '-' : '?';
     // user perm
     char rusr = S_IRUSR & st.st_mode ? 'r' : '-';
