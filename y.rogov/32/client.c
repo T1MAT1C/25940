@@ -6,6 +6,7 @@
 #include <sys/un.h>
 #include <string.h>
 #include <stdio.h>
+#include <time.h>
 
 #define SOCKET_PATH "./build/socket.sock"
 
@@ -18,7 +19,6 @@ int main(int argc, char *argv[])
     printf("USAGE: %s [msg]\n", argv[0]);
     return EXIT_SUCCESS;
   }
-  int delay = atoi(argv[2]);
 
   print("CLIENT: INITIALIZING...\n");
 
@@ -41,6 +41,10 @@ int main(int argc, char *argv[])
     return EXIT_FAILURE;
   }
 
+  // delay
+  int delay = atoi(argv[2]);
+  struct timespec rqtp = {.tv_nsec=delay};
+
   // send
   char *msg = argv[1];
   print("CLIENT: SENDING MESSAGE: '");
@@ -59,6 +63,6 @@ int main(int argc, char *argv[])
       }
       return EXIT_FAILURE;
     }
-    sleep(delay);
+    nanosleep(&rqtp, NULL);
   }
 }
