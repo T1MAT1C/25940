@@ -7,6 +7,7 @@
 #include <grp.h>
 #include <time.h>
 #include <string.h>
+#include <stdint.h>
 
 int main(int argc, const char *argv[])
 {
@@ -20,6 +21,8 @@ int main(int argc, const char *argv[])
       perror("stat");
       return EXIT_FAILURE;
     }
+
+    uintmax_t nlink = st.st_nlink;
 
     // dir
     char dir = S_ISDIR(st.st_mode) ? 'd' 
@@ -60,11 +63,12 @@ int main(int argc, const char *argv[])
     const char *name = slash ? slash + 1 : argv[a];
 
     printf(
-      "%c%c%c%c%c%c%c%c%c%c %8s %8s %8s %14s %-15s\n", 
+      "%c%c%c%c%c%c%c%c%c%c %4ju %8s %8s %8s %14s %-15s\n", 
       dir,
       rusr, wusr, xusr,
       rgrp, wgrp, xgrp,
       roth, woth, xoth,
+      nlink,
       pw_name, gr_name, 
       size,
       time_str,
