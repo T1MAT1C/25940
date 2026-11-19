@@ -1,3 +1,5 @@
+#define __EXTENSIONS__
+#define _POSIX_C_SOURCE 200809L
 
 #include <stdio.h>
 #include <unistd.h>
@@ -7,7 +9,7 @@
 #include <ctype.h>
 #include <signal.h>
 #include <fcntl.h>
-#include <sys/file.h>
+#include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 
@@ -28,7 +30,7 @@ void handle_sigio(int sig) {
     sigio_flag = 1;
 }
 
-// Включаем асинхронный режим сокета
+// асинхронный режим сокета
 int set_async(int fd) {
     int flags = fcntl(fd, F_GETFL, 0);
 
@@ -62,7 +64,7 @@ int main(void) {
 
     unlink(SOCKET_PATH);
 
-    // Создаём серверный сокет
+    // Создаём носок
     server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (server_fd == -1) {
         perror("socket");
