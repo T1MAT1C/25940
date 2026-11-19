@@ -43,7 +43,7 @@ int main(int argc, char *argv[])
 
   // delay
   int delay = atoi(argv[2]);
-  struct timespec rqtp = {.tv_nsec=delay};
+  struct timespec rqtp = {.tv_nsec=delay*1000};
 
   // send
   char *msg = argv[1];
