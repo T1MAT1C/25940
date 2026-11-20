@@ -99,6 +99,7 @@ int main()
         }
       }
     }
+    print("\n");
   }
 
   unlink(SOCKET_PATH);

@@ -44,7 +44,7 @@ int main(int argc, char *argv[])
 
   // delay
   long delay = atoi(argv[2]);
-  struct timespec req = {.tv_sec=0, .tv_nsec=delay*1000000L};
+  struct timespec req = {.tv_sec=0, .tv_nsec=delay*1L};
   struct timespec rem = {};
 
   // send

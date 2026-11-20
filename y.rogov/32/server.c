@@ -9,10 +9,8 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/ioctl.h>
-#include <sys/file.h>
-#include <aio.h>
 #include <errno.h>
-#include <string.h>
+#include <sys/file.h>
 #ifdef __sun
 #include <stropts.h>
 #endif
@@ -25,20 +23,6 @@
 int fd;
 int clients[SOCKET_CONN_LIMIT] = {0};
 int nclients = 0;
-
-struct aiocb cb[SOCKET_CONN_LIMIT];
-char abuf[SOCKET_CONN_LIMIT][256];
-
-int arm(int i)
-{
-  memset(&cb[i], 0, sizeof cb[i]);
-  cb[i].aio_fildes = clients[i];
-  cb[i].aio_buf    = abuf[i];
-  cb[i].aio_nbytes = sizeof abuf[i];
-  cb[i].aio_sigevent.sigev_notify = SIGEV_SIGNAL;
-  cb[i].aio_sigevent.sigev_signo  = SIGIO;
-  return aio_read(&cb[i]);
-}
 
 void set_async(int fd)
 {
@@ -56,47 +40,45 @@ void set_async(int fd)
 void on_server_sigio(int sig)
 {
   if (sig != SIGIO) return;
+  // usleep(1000000);
 
   // accept
   int client;
   while((client = accept(fd, NULL, NULL)) >= 0)
   {
     print("SERVER: NEW CONNECTION\n");
-
+    set_async(client);
+    
     if (nclients >= SOCKET_CONN_LIMIT) {
       close(client);
       continue;
     }
 
-    clients[nclients] = client;
-    if (arm(nclients) < 0) { close(client); continue; }
-    nclients++;
+    clients[nclients++] = client;
   }
 
-  // serve clients (aio)
+  // serve clients
+  char buf[256] = {0};
   for (int i = 0; i < nclients; ++i)
   {
-    int err = aio_error(&cb[i]);
-    if (err == EINPROGRESS) continue;
-
-    ssize_t n = (err == 0) ? aio_return(&cb[i]) : -1;
-
-    if (n > 0) {
-      for (ssize_t j = 0; j < n; ++j)
-        abuf[i][j] = toupper((unsigned char)abuf[i][j]);
-      write(STDOUT_FILENO, abuf[i], n);
-      if (arm(i) == 0) continue;
-      // fallthrough: перевооружить не удалось → закрываем
+    int n;
+    while((n = recv(clients[i], buf, sizeof(buf), 0)) > 0)
+    {
+      for (int j = 0; j < n; ++j)
+        buf[j] = toupper(buf[j]);
+      write(STDOUT_FILENO, buf, n);
+      print("\n");
     }
 
-    // n <= 0 (EOF/ошибка) или arm провалился → закрываем
-    close(clients[i]);
-    clients[i] = clients[--nclients];
-    cb[i]       = cb[nclients];
-    memcpy(abuf[i], abuf[nclients], sizeof abuf[i]);
-    i--;
+    if (n == -1 && errno == EAGAIN)
+      continue;
+    if (n <= 0)
+    {
+      close(clients[i]);
+      clients[i] = clients[--nclients];
+      i--;
+    }
   }
-  print("\n");
 }
 
 int main()
@@ -107,6 +89,7 @@ int main()
 
   fd = socket(AF_UNIX, SOCK_STREAM, 0);
 
+  // bind
   struct sockaddr_un sa_server = {
     .sun_family = AF_UNIX,
     .sun_path = SOCKET_PATH
@@ -114,9 +97,11 @@ int main()
   if (bind(fd, (struct sockaddr*)&sa_server, sizeof sa_server) < 0)
     err(EXIT_FAILURE, "bind");
 
+  // listen
   if (listen(fd, SOCKET_CONN_LIMIT) < 0)
     err(EXIT_FAILURE, "listen");
 
+  // set server async
   set_async(fd);
 
 #if defined(__sun)
