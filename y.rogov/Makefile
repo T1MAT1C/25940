@@ -1,3 +1,9 @@
+UNAME_S := $(shell uname -s)
+
+ifeq ($(UNAME_S),SunOS)
+    LDLIBS += -lsocket -lnsl
+endif
+
 all: build/1.out\
      build/2.out\
      build/3.out\
@@ -20,15 +26,15 @@ all: build/1.out\
 
 build/%.out : %/main.c
 	@mkdir -p build
-	cc $< -o $@ -lsocket -lnsl
+	cc $< -o $@ $(LDLIBS)
 
 build/%_client.out : %/client.c
 	@mkdir -p build
-	cc $< -o $@ -lsocket -lnsl
+	cc $< -o $@ $(LDLIBS)
 
 build/%_server.out : %/server.c
 	@mkdir -p build
-	cc $< -o $@ -lsocket -lnsl
+	cc $< -o $@ $(LDLIBS)
 
 clean: 
 	rm -r build

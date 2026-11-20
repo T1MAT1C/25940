@@ -7,6 +7,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
+#include <errno.h>
 
 #define SOCKET_PATH "./build/socket.sock"
 
@@ -16,7 +17,7 @@ int main(int argc, char *argv[])
 {
   if (argc != 3)
   {
-    printf("USAGE: %s [msg]\n", argv[0]);
+    printf("USAGE: %s [msg] [delay]\n", argv[0]);
     return EXIT_SUCCESS;
   }
 
@@ -42,8 +43,9 @@ int main(int argc, char *argv[])
   }
 
   // delay
-  int delay = atoi(argv[2]);
-  struct timespec rqtp = {.tv_nsec=delay*1000};
+  long delay = atoi(argv[2]);
+  struct timespec req = {.tv_sec=0, .tv_nsec=delay*1000000L};
+  struct timespec rem = {};
 
   // send
   char *msg = argv[1];
@@ -63,6 +65,9 @@ int main(int argc, char *argv[])
       }
       return EXIT_FAILURE;
     }
-    nanosleep(&rqtp, NULL);
+    while (nanosleep(&req, &rem) == -1) {
+      if (errno == EINTR) { req = rem; } 
+      else { return -1; }
+    }
   }
 }
