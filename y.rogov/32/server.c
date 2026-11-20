@@ -67,7 +67,6 @@ void on_server_sigio(int sig)
       for (int j = 0; j < n; ++j)
         buf[j] = toupper(buf[j]);
       write(STDOUT_FILENO, buf, n);
-      print("\n");
     }
 
     if (n == -1 && errno == EAGAIN)
@@ -79,6 +78,7 @@ void on_server_sigio(int sig)
       i--;
     }
   }
+  print("\n");
 }
 
 int main()
