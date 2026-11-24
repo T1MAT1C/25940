@@ -1,116 +1,90 @@
+#define _POSIX_C_SOURCE 200809L
 
 #include <stdio.h>
-#include <unistd.h>
 #include <stdlib.h>
-#include <string.h>
 #include <ctype.h>
 #include <errno.h>
+#include <unistd.h>
+#include <sys/types.h>
 #include <sys/wait.h>
 
-int main(void) {
-    int fd[2];
-    pid_t pid;
-    char buf[256];
+static int write_all(int fd, const char *data, size_t len)
+{
+    while (len > 0) {
+        ssize_t n = write(fd, data, len);
+        if (n < 0 && errno == EINTR)
+            continue;
+        if (n <= 0)
+            return -1;
+        data += n;
+        len -= (size_t)n;
+    }
+    return 0;
+}
 
-    // Создаём программный канал
-    if (pipe(fd) == -1) {
+int main(int argc, char **argv)
+{
+    int pipefd[2], status, i;
+    pid_t pid;
+
+    if (pipe(pipefd) == -1) {
         perror("pipe");
         return 1;
     }
-
     pid = fork();
-
     if (pid == -1) {
         perror("fork");
+        close(pipefd[0]);
+        close(pipefd[1]);
         return 1;
     }
 
     if (pid == 0) {
-        // Дочерний процесс читает данные из канала
-        close(fd[1]);
-
-        int esc = 0;
-        ssize_t n;
-
-        while ((n = read(fd[0], buf, sizeof(buf))) != 0) {
-            if (n < 0 && errno == EINTR)
-                continue;
+        char buf[4096];
+        ssize_t n, j;
+        close(pipefd[1]); /* child only reads */
+        while ((n = read(pipefd[0], buf, sizeof buf)) != 0) {
             if (n < 0) {
-                perror("read");
-                break;
+                if (errno == EINTR)
+                    continue;
+                perror("child read");
+                _exit(1);
             }
-
-            int out = 0;
-
-            // Игнорируем стрелочки и другие Escape-последовательности
-            for (ssize_t i = 0; i < n; i++) {
-                unsigned char c = (unsigned char)buf[i];
-
-                if (esc == 1) {
-                    if (c == '[') esc = 2;
-                    else if (c == 'O') esc = 3;
-                    else if (c != 27) {
-                        esc = 0;
-                        buf[out++] = (char)toupper(c);
-                    }
-                    continue;
-                }
-
-                if (esc == 2) {
-                    if (c >= 0x40 && c <= 0x7E)
-                        esc = 0;
-                    continue;
-                }
-
-                if (esc == 3) {
-                    esc = 0;
-                    continue;
-                }
-
-                if (c == 27) {
-                    esc = 1;
-                    continue;
-                }
-
-                buf[out++] = (char)toupper(c);
+            for (j = 0; j < n; ++j)
+                buf[j] = (char)toupper((unsigned char)buf[j]);
+            if (write_all(STDOUT_FILENO, buf, (size_t)n) == -1) {
+                perror("child write");
+                _exit(1);
             }
-
-            if (out > 0)
-                write(STDOUT_FILENO, buf, out);
         }
-
-        close(fd[0]);
-    }
-    else {
-        // Родительский процесс отправляет текст в канал
-        close(fd[0]);
-
-        printf("Введите текст (Ctrl+D для завершения):\n");
-
-        ssize_t n;
-        while ((n = read(STDIN_FILENO, buf, sizeof(buf))) > 0) {
-            ssize_t sent = 0;
-
-            while (sent < n) {
-                ssize_t k = write(fd[1], buf + sent, n - sent);
-
-                if (k < 0 && errno == EINTR)
-                    continue;
-                if (k <= 0) {
-                    perror("write");
-                    break;
-                }
-
-                sent += k;
-            }
-
-            if (sent < n)
-                break;
-        }
-
-        close(fd[1]);
-        waitpid(pid, NULL, 0);
+        close(pipefd[0]);
+        _exit(0);
     }
 
+    close(pipefd[0]); /* parent only writes */
+    if (argc == 1) {
+        if (write_all(pipefd[1], "Hello, Unix PiPe! aBc 123\n", sizeof("Hello, Unix PiPe! aBc 123\n") - 1) == -1)
+            perror("parent write");
+    } else {
+        for (i = 1; i < argc; ++i) {
+            const char *s = argv[i];
+            size_t len = 0;
+            while (s[len])
+                ++len;
+            if (write_all(pipefd[1], s, len) == -1 ||
+                write_all(pipefd[1], i == argc - 1 ? "\n" : " ", 1) == -1) {
+                perror("parent write");
+                break;
+            }
+        }
+    }
+    close(pipefd[1]); /* EOF for child */
+
+    if (waitpid(pid, &status, 0) == -1) {
+        perror("waitpid");
+        return 1;
+    }
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+        return 1;
     return 0;
 }

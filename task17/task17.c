@@ -1,28 +1,54 @@
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include <termios.h>
 #include <ctype.h>
-#include <string.h>
 #include <errno.h>
 
 #define MAX_LINE 40
+#define ERASE 127
+#define KILL 21
 #define CTRL_W 23
 #define CTRL_D 4
 #define CTRL_G 7
 
+// Выводим символы на экран
+void print_bytes(const char *s, size_t len) {
+    while (len > 0) {
+        ssize_t n = write(STDOUT_FILENO, s, len);
+        if (n < 0 && errno == EINTR)
+            continue;
+        if (n <= 0)
+            break;
+        s += n;
+        len -= n;
+    }
+}
+
 void print_char(char c) {
-    putchar(c);
-    fflush(stdout);
+    print_bytes(&c, 1);
 }
 
-void erase_chars(int n) {
-    while (n-- > 0)
-        printf("\b \b");
-    fflush(stdout);
+// Удаляем последний символ
+void erase_last(char *line, size_t *len, int *col) {
+    if (*len == 0)
+        return;
+
+    (*len)--;
+    line[*len] = '\0';
+
+    // Если курсор в начале строки, переходим на предыдущую
+    if (*col == 0) {
+        print_bytes("\033[1A\033[40G\033[X", 12);
+        *col = MAX_LINE - 1;
+    } else {
+        print_bytes("\b \b", 3);
+        (*col)--;
+    }
 }
 
-int main() {
+int main(void) {
     struct termios oldt, newt;
 
     if (tcgetattr(STDIN_FILENO, &oldt) == -1) {
@@ -31,9 +57,7 @@ int main() {
     }
 
     newt = oldt;
-
-    // Отключаем эхо, каноническую обработку и обработку сигналов
-    newt.c_lflag &= ~(ICANON | ECHO | ISIG);
+    newt.c_lflag &= ~(ICANON | ECHO);
     newt.c_cc[VMIN] = 1;
     newt.c_cc[VTIME] = 0;
 
@@ -42,102 +66,120 @@ int main() {
         return 1;
     }
 
-    char line[MAX_LINE];
-    int len = 0;
+    size_t capacity = 128;
+    size_t len = 0;
+    int col = 0;
+    int esc = 0;
+
+    char *line = malloc(capacity);
+    if (!line) {
+        perror("malloc");
+        tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+        return 1;
+    }
+
     char ch;
-    ssize_t r;
+    ssize_t n;
 
-    while (1) {
-        r = read(STDIN_FILENO, &ch, 1);
+    while ((n = read(STDIN_FILENO, &ch, 1)) == 1) {
+        unsigned char c = (unsigned char)ch;
 
-        if (r < 0 && errno == EINTR)
-            continue;
-        if (r != 1)
-            break;
-
-        // 2. При вводе ERASE стираем последний символ
-        if ((unsigned char)ch == oldt.c_cc[VERASE]) {
-            if (len > 0) {
-                len--;
-                erase_chars(1);
-            }
+        // Игнорируем стрелочки
+        if (esc == 1) {
+            if (c == '[') esc = 2;
+            else if (c == 'O') esc = 3;
+            else if (c != 27) esc = 0;
             continue;
         }
 
-        // 3. При вводе KILL стираем всю текущую строку
-        if ((unsigned char)ch == oldt.c_cc[VKILL]) {
-            erase_chars(len);
-            len = 0;
+        if (esc == 2) {
+            if (c >= 0x40 && c <= 0x7E)
+                esc = 0;
             continue;
         }
 
-        // 4. При CTRL-W стираем последнее слово и следующие за ним пробелы
-        if (ch == CTRL_W) {
-            while (len > 0 && line[len - 1] == ' ') {
-                len--;
-                erase_chars(1);
-            }
-            while (len > 0 && line[len - 1] != ' ') {
-                len--;
-                erase_chars(1);
-            }
+        if (esc == 3) {
+            esc = 0;
             continue;
         }
 
-        // 5. Завершаем программу, если CTRL-D введён в начале строки
-        if (ch == CTRL_D) {
+        if (c == 27) {
+            esc = 1;
+            continue;
+        }
+
+        // CTRL-D завершает программу в начале строки
+        if (c == CTRL_D) {
             if (len == 0)
                 break;
             continue;
         }
 
-        // 6. Все остальные непечатаемые символы заменяем звуковым сигналом CTRL-G
-        if (!isprint((unsigned char)ch)) {
+        // ERASE удаляет последний символ
+        if (c == ERASE || c == 8) {
+            erase_last(line, &len, &col);
+            continue;
+        }
+
+        // KILL удаляет всю введённую строку
+        if (c == KILL) {
+            while (len > 0)
+                erase_last(line, &len, &col);
+            continue;
+        }
+
+        // CTRL-W удаляет последнее слово и пробелы после него
+        if (c == CTRL_W) {
+            while (len > 0 && line[len - 1] == ' ')
+                erase_last(line, &len, &col);
+
+            while (len > 0 && line[len - 1] != ' ')
+                erase_last(line, &len, &col);
+
+            continue;
+        }
+
+        // Непечатаемые символы издают звуковой сигнал
+        if (!isprint(c)) {
             print_char(CTRL_G);
             continue;
         }
 
-        // 7. Если слово пересекает 40-й столбец, переносим его в начало следующей строки
-        if (len == MAX_LINE && ch != ' ') {
-            int start = len;
+        // Увеличиваем буфер при необходимости
+        if (len + 1 >= capacity) {
+            capacity *= 2;
+            char *tmp = realloc(line, capacity);
 
-            while (start > 0 && line[start - 1] != ' ')
-                start--;
-
-            if (start == 0) {
-                print_char(CTRL_G);
-                continue;
+            if (!tmp) {
+                perror("realloc");
+                break;
             }
 
-            int word_len = len - start;
-            int end = start;
-
-            while (end > 0 && line[end - 1] == ' ')
-                end--;
-
-            erase_chars(len - end);
-            print_char('\n');
-
-            memmove(line, line + start, word_len);
-            len = word_len;
-
-            for (int i = 0; i < len; i++)
-                print_char(line[i]);
-        }
-        else if (len == MAX_LINE && ch == ' ') {
-            print_char('\n');
-            len = 0;
+            line = tmp;
         }
 
-        // 1. Каждый введённый символ немедленно отображаем на экране
+        // Сохраняем и выводим символ
         line[len++] = ch;
+        line[len] = '\0';
         print_char(ch);
+
+        col++;
+
+        // После 40 символов переносим оставшийся ввод на новую строку
+        if (col == MAX_LINE) {
+            print_char('\n');
+            col = 0;
+        }
     }
 
+    if (n < 0 && errno != EINTR)
+        perror("read");
+
     // Восстанавливаем настройки терминала
-    if (tcsetattr(STDIN_FILENO, TCSANOW, &oldt) == -1)
-        perror("tcsetattr");
+    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
 
     print_char('\n');
+    free(line);
+
     return 0;
 }
