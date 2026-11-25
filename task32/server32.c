@@ -1,71 +1,247 @@
-#define __EXTENSIONS__
-#define _POSIX_C_SOURCE 200809L
 
+#define __EXTENSIONS__
 #include <stdio.h>
-#include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <signal.h>
 #include <errno.h>
 #include <ctype.h>
-#include <signal.h>
+#include <time.h>
+#include <poll.h>
 #include <fcntl.h>
-#include <sys/file.h>
 #include <sys/types.h>
+#include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/ioctl.h>
+#include <sys/stream.h>
+#include <sys/stropts.h>
+#include <sys/filio.h>
 
 #define SOCKET_PATH "/tmp/task32"
-#define MAX_CLIENTS 100
+#define MAX_CLIENTS 10
+#define LINE_SIZE 512
 
 struct Client {
     int fd;
     int esc;
+    char line[LINE_SIZE];
+    int len;
 };
 
-struct Client clients[MAX_CLIENTS];
-volatile sig_atomic_t sigio_flag = 0;
+static struct Client clients[MAX_CLIENTS];
+static volatile sig_atomic_t io_pending = 0;
+static volatile sig_atomic_t stop = 0;
+static int sync_mode = 0;
 
-// Обработчик сигнала SIGIO
-void handle_sigio(int sig) {
+static struct timespec start_time;
+static long sig_count = 0, poll_ready = 0, poll_idle = 0;
+static long n_conn = 0, n_msg = 0, n_closed = 0;
+
+// Обработчик SIGPOLL
+void on_io(int sig) {
     (void)sig;
-    sigio_flag = 1;
+    io_pending = 1;
 }
 
-// асинхронный режим сокета
-int set_async(int fd) {
+// Обработчик завершения
+void on_stop(int sig) {
+    (void)sig;
+    stop = 1;
+}
+
+// Выводим время с момента запуска
+void stamp(void) {
+    struct timespec t;
+    long sec, ns;
+
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    sec = t.tv_sec - start_time.tv_sec;
+    ns = t.tv_nsec - start_time.tv_nsec;
+
+    if (ns < 0) {
+        sec--;
+        ns += 1000000000L;
+    }
+
+    printf("t=%ld.%02ld ", sec, ns / 10000000L);
+}
+
+// Включаем неблокирующий и асинхронный режим
+int arm(int fd) {
     int flags = fcntl(fd, F_GETFL, 0);
+    int on = 1;
 
     if (flags == -1 ||
-        fcntl(fd, F_SETOWN, getpid()) == -1 ||
-        fcntl(fd, F_SETFL, flags | FNDELAY | FASYNC) == -1)
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1)
+        return -1;
+
+    if (sync_mode)
+        return 0;
+
+    if (fcntl(fd, F_SETOWN, getpid()) == -1 ||
+        ioctl(fd, FIOASYNC, &on) == -1 ||
+        ioctl(fd, I_SETSIG,
+              S_INPUT | S_MSG | S_HANGUP | S_ERROR) == -1)
         return -1;
 
     return 0;
 }
 
-int main(void) {
-    int server_fd, client_fd;
+// Выводим полученную строку
+void print_line(int i) {
+    clients[i].line[clients[i].len] = '\0';
+
+    stamp();
+    printf("fd=%d  %s\n", clients[i].fd, clients[i].line);
+    fflush(stdout);
+
+    clients[i].len = 0;
+    n_msg++;
+}
+
+// Обрабатываем символ и игнорируем стрелочки
+void process_char(int i, unsigned char c) {
+    struct Client *cl = &clients[i];
+
+    if (cl->esc == 1) {
+        if (c == '[') cl->esc = 2;
+        else if (c == 'O') cl->esc = 3;
+        else if (c != 27) {
+            cl->esc = 0;
+            process_char(i, c);
+        }
+        return;
+    }
+
+    if (cl->esc == 2) {
+        if (c == 27) cl->esc = 1;
+        else if (c >= 0x40 && c <= 0x7E)
+            cl->esc = 0;
+        return;
+    }
+
+    if (cl->esc == 3) {
+        cl->esc = 0;
+        return;
+    }
+
+    if (c == 27) {
+        cl->esc = 1;
+        return;
+    }
+
+    c = (unsigned char)toupper(c);
+
+    if (c == '\n') {
+        print_line(i);
+    } else if (cl->len < LINE_SIZE - 1) {
+        cl->line[cl->len++] = c;
+    } else {
+        print_line(i);
+        cl->line[cl->len++] = c;
+    }
+}
+
+// Принимаем всех ожидающих клиентов
+void accept_clients(int server_fd) {
+    int c, i;
+
+    while (1) {
+        c = accept(server_fd, NULL, NULL);
+
+        if (c < 0) {
+            if (errno == EINTR)
+                continue;
+            if (errno != EAGAIN && errno != EWOULDBLOCK)
+                perror("accept");
+            break;
+        }
+
+        for (i = 0; i < MAX_CLIENTS; i++)
+            if (clients[i].fd == -1)
+                break;
+
+        if (i == MAX_CLIENTS) {
+            printf("Достигнут лимит клиентов\n");
+            close(c);
+            continue;
+        }
+
+        if (arm(c) == -1) {
+            perror("arm client");
+            close(c);
+            continue;
+        }
+
+        clients[i].fd = c;
+        clients[i].esc = 0;
+        clients[i].len = 0;
+        n_conn++;
+
+        stamp();
+        printf("Подключился клиент fd=%d\n", c);
+    }
+}
+
+// Читаем данные от клиента
+void read_client(int i) {
+    char buf[512];
+    ssize_t n;
+
+    while (1) {
+        n = read(clients[i].fd, buf, sizeof(buf));
+
+        if (n < 0 && errno == EINTR)
+            continue;
+
+        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+            break;
+
+        if (n <= 0) {
+            int fd = clients[i].fd;
+
+            if (clients[i].len > 0)
+                print_line(i);
+
+            close(fd);
+            clients[i].fd = -1;
+            clients[i].len = 0;
+            clients[i].esc = 0;
+            n_closed++;
+
+            stamp();
+            printf("Клиент fd=%d отключился\n", fd);
+            break;
+        }
+
+        for (ssize_t j = 0; j < n; j++)
+            process_char(i, (unsigned char)buf[j]);
+    }
+}
+
+int main(int argc, char **argv) {
+    int server_fd, r, nfds;
     struct sockaddr_un addr;
-    struct sigaction sa = {0};
-    sigset_t set, oldset;
-    char buf[1024];
+    struct sigaction sa;
+    struct pollfd pf[MAX_CLIENTS + 1];
 
-    // Настраиваем обработчик SIGIO
-    sigemptyset(&set);
-    sigaddset(&set, SIGIO);
-    sigprocmask(SIG_BLOCK, &set, &oldset);
+    sync_mode = (argc > 1 && strcmp(argv[1], "sync") == 0);
 
-    sa.sa_handler = handle_sigio;
-    sigemptyset(&sa.sa_mask);
-    sigaction(SIGIO, &sa, NULL);
+    clock_gettime(CLOCK_MONOTONIC, &start_time);
 
     // Подготавливаем список клиентов
     for (int i = 0; i < MAX_CLIENTS; i++)
         clients[i].fd = -1;
 
-    unlink(SOCKET_PATH);
+    // Удаляем старый сокет
+    if (unlink(SOCKET_PATH) == -1 && errno != ENOENT) {
+        perror("unlink");
+        return 1;
+    }
 
-    // Создаём носок
+    // Создаём серверный сокет
     server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (server_fd == -1) {
         perror("socket");
@@ -76,115 +252,124 @@ int main(void) {
     addr.sun_family = AF_UNIX;
     strcpy(addr.sun_path, SOCKET_PATH);
 
-    // Привязываем сокет и ожидаем клиентов
+    // Привязываем сокет и ожидаем подключения
     if (bind(server_fd, (struct sockaddr *)&addr, sizeof(addr)) == -1 ||
-        listen(server_fd, 10) == -1 || set_async(server_fd) == -1) {
-        perror("bind/listen/async");
+        listen(server_fd, 16) == -1) {
+        perror("bind/listen");
         close(server_fd);
         unlink(SOCKET_PATH);
         return 1;
     }
 
-    printf("Сервер ожидает клиентов...\n");
+    // Настраиваем обработчики сигналов
+    memset(&sa, 0, sizeof(sa));
+    sigemptyset(&sa.sa_mask);
 
-    while (1) {
-        // Ждём уведомления о готовности сокета
-        while (!sigio_flag)
-            sigsuspend(&oldset);
-
-        sigio_flag = 0;
-
-        // Принимаем всех ожидающих клиентов
-        while ((client_fd = accept(server_fd, NULL, NULL)) >= 0) {
-            int i;
-
-            for (i = 0; i < MAX_CLIENTS; i++)
-                if (clients[i].fd == -1)
-                    break;
-
-            if (i == MAX_CLIENTS || set_async(client_fd) == -1) {
-                close(client_fd);
-                continue;
-            }
-
-            clients[i].fd = client_fd;
-            clients[i].esc = 0;
-            printf("Подключился новый клиент\n");
-        }
-
-        if (errno != EWOULDBLOCK && errno != EAGAIN && errno != EINTR)
-            perror("accept");
-
-        // Получаем данные от всех клиентов
-        for (int i = 0; i < MAX_CLIENTS; i++) {
-            if (clients[i].fd == -1)
-                continue;
-
-            while (1) {
-                ssize_t n = read(clients[i].fd, buf, sizeof(buf));
-
-                if (n < 0 && errno == EINTR)
-                    continue;
-
-                if (n <= 0) {
-                    if (n < 0 && errno != EWOULDBLOCK &&
-                        errno != EAGAIN)
-                        perror("read");
-
-                    if (n == 0 || (n < 0 && errno != EWOULDBLOCK &&
-                                   errno != EAGAIN)) {
-                        printf("Клиент отключился\n");
-                        close(clients[i].fd);
-                        clients[i].fd = -1;
-                    }
-                    break;
-                }
-
-                // Игнорируем стрелочки и другие Escape-последовательности
-                int out = 0;
-
-                for (ssize_t j = 0; j < n; j++) {
-                    unsigned char c = (unsigned char)buf[j];
-
-                    if (clients[i].esc == 1) {
-                        if (c == '[') clients[i].esc = 2;
-                        else if (c == 'O') clients[i].esc = 3;
-                        else if (c != 27) {
-                            clients[i].esc = 0;
-                            buf[out++] = (char)toupper(c);
-                        }
-                        continue;
-                    }
-
-                    if (clients[i].esc == 2) {
-                        if (c == 27) clients[i].esc = 1;
-                        else if (c >= 0x40 && c <= 0x7E)
-                            clients[i].esc = 0;
-                        continue;
-                    }
-
-                    if (clients[i].esc == 3) {
-                        clients[i].esc = 0;
-                        continue;
-                    }
-
-                    if (c == 27) {
-                        clients[i].esc = 1;
-                        continue;
-                    }
-
-                    buf[out++] = (char)toupper(c);
-                }
-
-                if (out > 0) {
-                    fwrite(buf, 1, out, stdout);
-                    fflush(stdout);
-                }
-            }
-        }
+    sa.sa_handler = on_io;
+    if (sigaction(SIGPOLL, &sa, NULL) == -1) {
+        perror("sigaction SIGPOLL");
+        close(server_fd);
+        unlink(SOCKET_PATH);
+        return 1;
     }
+
+    sa.sa_handler = on_stop;
+    if (sigaction(SIGINT, &sa, NULL) == -1 ||
+        sigaction(SIGTERM, &sa, NULL) == -1) {
+        perror("sigaction");
+        close(server_fd);
+        unlink(SOCKET_PATH);
+        return 1;
+    }
+
+    signal(SIGPIPE, SIG_IGN);
+
+    // Настраиваем серверный сокет
+    if (arm(server_fd) == -1) {
+        perror("arm server");
+        close(server_fd);
+        unlink(SOCKET_PATH);
+        return 1;
+    }
+
+    printf("Server %s | PID=%d | клиентов до %d\n",
+           sync_mode ? "SYNC (poll 1 ms)" :
+                       "ASYNC (SIGPOLL, poll fallback 250 ms)",
+           (int)getpid(), MAX_CLIENTS);
+
+    printf("Для завершения нажмите Ctrl+C.\n");
+
+    while (!stop) {
+        // Собираем список сокетов для poll
+        nfds = 1;
+        pf[0].fd = server_fd;
+        pf[0].events = POLLIN;
+
+        for (int i = 0; i < MAX_CLIENTS; i++) {
+            if (clients[i].fd != -1) {
+                pf[nfds].fd = clients[i].fd;
+                pf[nfds].events = POLLIN;
+                nfds++;
+            }
+        }
+
+        // Ждём событие или сигнал
+        if (io_pending && !sync_mode) {
+            r = -2;
+        } else {
+            r = poll(pf, nfds, sync_mode ? 1 : 250);
+        }
+
+        if (io_pending) {
+            io_pending = 0;
+            sig_count++;
+
+            stamp();
+            printf("Получен SIGPOLL: событие ввода-вывода\n");
+        }
+
+        if (r == -2) {
+            // Уже получили SIGPOLL
+        } else if (r < 0) {
+            if (errno != EINTR) {
+                perror("poll");
+                break;
+            }
+        } else if (r == 0) {
+            poll_idle++;
+        } else {
+            poll_ready++;
+        }
+
+        if (stop)
+            break;
+
+        // Проверяем новые подключения
+        accept_clients(server_fd);
+
+        // Проверяем данные всех клиентов
+        for (int i = 0; i < MAX_CLIENTS; i++)
+            if (clients[i].fd != -1)
+                read_client(i);
+    }
+
+    // Выводим статистику
+    printf("\nИТОГ РАБОТЫ:\n");
+    printf("SIGPOLL: %ld\n", sig_count);
+    printf("Событий poll: %ld\n", poll_ready);
+    printf("Тайм-аутов poll: %ld\n", poll_idle);
+    printf("Подключений: %ld\n", n_conn);
+    printf("Сообщений: %ld\n", n_msg);
+    printf("Отключений: %ld\n", n_closed);
+    printf("Процессов: 1\n");
+
+    // Закрываем все соединения
+    for (int i = 0; i < MAX_CLIENTS; i++)
+        if (clients[i].fd != -1)
+            close(clients[i].fd);
 
     close(server_fd);
     unlink(SOCKET_PATH);
+
     return 0;
 }

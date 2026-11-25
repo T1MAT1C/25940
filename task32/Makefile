@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -Wextra
+CFLAGS = -Wall -Wextra -std=gnu11
 LIBS = -lsocket -lnsl
 
 all: server32 client32
