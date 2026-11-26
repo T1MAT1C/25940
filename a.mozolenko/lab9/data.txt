@@ -1,0 +1,4 @@
+The child prints this file using cat.
+The parent also prints text.
+Their initial output order is unspecified.
+The default mode waits before printing the parent final line.
